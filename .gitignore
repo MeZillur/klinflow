@@ -4,7 +4,8 @@ Thumbs.db
 
 # Env / secrets
 .env
-.env.* 
+.env.*
+!.env.example
 .credentials.json
 
 # Dependencies / build
