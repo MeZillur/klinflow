@@ -1,21 +1,32 @@
-# (paste the same content you saw in the .gitignore block above)
+# OS
 .DS_Store
 Thumbs.db
+
+# Env / secrets
 .env
 .env.* 
-.config/*.json
 .credentials.json
+
+# Dependencies / build
 node_modules/
 vendor/
 public/build/
 dist/
 build/
+
+# PHP / DB
 *.sql
 *.sqlite
+
+# Archives / large files
 *.zip
 *.tar.gz
 modules.zip
+
+# IDE / editor
 .vscode/
 .idea/
+
+# Mac Privacy
 .Trashes
 .BrowserSync
