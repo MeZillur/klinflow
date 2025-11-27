@@ -1,0 +1,17 @@
+Array
+(
+    [barcode] => 
+    [supplier_id] => 9
+    [supplier_name] => Advanced Chemical Industries PLC
+    [arrival_date] => 2025-10-24
+    [expiry_date] => 2025-10-31
+    [name] => Laptop
+    [product_code] => LAP-ICT-95000
+    [category_code] => ICT
+    [unit] => pcs
+    [price] => 95000
+    [initial_qty] => 200
+    [sku] => SKU-LAP-ICT-95000
+    [spec] => 
+    [status] => active
+)

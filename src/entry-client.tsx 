@@ -1,0 +1,39 @@
+import { render } from 'solid-js/web';
+import { createSignal } from 'solid-js';
+import PickerApp from './components/Picker';
+import ToastApp, { toastController } from './components/Toast';
+import { initKFBridge } from './bridge/kf-solid-bridge';
+import './styles.css';
+
+// Create a mount root for picker + toast
+const root = document.createElement('div');
+root.id = 'kf-solid-root';
+document.body.appendChild(root);
+
+// We render simple containers that will host modal and toasts.
+render(() => (
+  <>
+    <div id="kf-picker-mount"></div>
+    <div id="kf-toast-mount"></div>
+  </>
+), root);
+
+// Render Picker and Toast into their mounts
+render(() => <PickerApp />, document.getElementById('kf-picker-mount')!);
+render(() => <ToastApp />, document.getElementById('kf-toast-mount')!);
+
+// Initialize bridge which exposes window.KF.picker.show and window.KF.toast
+initKFBridge({
+  showPicker: async (opts) => {
+    // delegate to global CustomEvent consumed by Picker component
+    const ev = new CustomEvent('kf:picker:show', { detail: opts });
+    document.dispatchEvent(ev);
+    // Picker component will handle writing to host and calling onPick
+  },
+  toast: (msg, opts) => {
+    toastController.push(msg, opts);
+  }
+});
+
+// expose a small ready event
+document.dispatchEvent(new CustomEvent('kf:solid:ready'));

@@ -1,0 +1,94 @@
+----
+DATE: 2025-10-05T16:21:25+06:00
+FROM: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+TO: mezillur@hotmail.com
+SUBJECT: KlinFlow CP — Password Reset
+PARAMS: -f contact@klinflow.com
+HEADERS:
+MIME-Version: 1.0
+Content-type: text/html; charset=UTF-8
+From: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+Reply-To: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+X-Mailer: KlinFlow-Mailer
+BODY:
+<p>Hello,</p><p>You requested a password reset for your KlinFlow Control Panel account.</p><p><strong>This link will expire in 60 minutes.</strong></p><p><a href="https://klinflow.com/cp/reset?token=3934d47ccfe416634dc757efc4cda4f432684fe75b6c8eabf830f5ac8ee0be5f">Reset your password</a></p><p>If you did not request this, you can safely ignore this email.</p><p>— KlinFlow</p>
+RESULT: SENT
+----
+DATE: 2025-10-05T16:26:57+06:00
+FROM: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+TO: mezillur@hotmail.com
+SUBJECT: KlinFlow CP — Password Reset
+PARAMS: -f contact@klinflow.com
+HEADERS:
+MIME-Version: 1.0
+Content-type: text/html; charset=UTF-8
+From: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+Reply-To: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+X-Mailer: KlinFlow-Mailer
+BODY:
+<p>Hello,</p><p>You requested a password reset for your KlinFlow Control Panel account.</p><p><strong>This link will expire in 120 minutes.</strong></p><p><a href="https://klinflow.com/cp/reset?token=f74476fa93f15a6f9a8908028a0ade6b505e9c12274d992fe6ae2f2d536b609a">Reset your password</a></p><p>If you did not request this, you can safely ignore this email.</p><p>— KlinFlow</p>
+RESULT: SENT
+----
+DATE: 2025-10-05T19:50:35+06:00
+FROM: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+TO: mezillur1983@gmail.com
+SUBJECT: Welcome to KlinFlow (Owner Access)
+PARAMS: -f contact@klinflow.com
+HEADERS:
+MIME-Version: 1.0
+Content-type: text/html; charset=UTF-8
+From: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+Reply-To: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+X-Mailer: KlinFlow-Mailer
+BODY:
+<p>Welcome to KlinFlow.</p>
+                         <p>Your organization <strong>Ipsita ICT & Company</strong> is ready.</p>
+                         <p>Login email: <strong>mezillur1983@gmail.com</strong></p>
+                         <p>Temporary password: <strong>hLCgjT$5zS</strong></p>
+                         <p>Please reset your password after login.</p>
+RESULT: SENT
+----
+DATE: 2025-10-06T13:07:37+06:00
+FROM: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+TO: mezillur1983@gmail.com
+SUBJECT: KlinFlow CP — Password Reset
+PARAMS: -f contact@klinflow.com
+HEADERS:
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+From: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+Reply-To: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+X-Mailer: KlinFlow-Mailer
+RESULT: SENT
+
+----
+DATE: 2025-10-06T14:10:25+06:00
+FROM: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+TO: mezillur1983@gmail.com
+SUBJECT: KlinFlow — Reset your password
+PARAMS: -f contact@klinflow.com
+HEADERS:
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+From: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+Reply-To: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+X-Mailer: KlinFlow-Mailer
+RESULT: SENT
+
+----
+DATE: 2025-10-06T15:37:53+06:00
+FROM: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+TO: info@corporateikon.com
+SUBJECT: KlinFlow — Corporate Ikon ready
+PARAMS: -f contact@klinflow.com
+HEADERS:
+MIME-Version: 1.0
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+From: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+Reply-To: =?UTF-8?B?S2xpbkZsb3c=?= <contact@klinflow.com>
+X-Mailer: KlinFlow-Mailer
+RESULT: SENT
+

@@ -1,0 +1,4 @@
+/* minimal global styles for lookup + utilities */
+.kf-suggest { position:absolute; left:0; right:0; margin-top:.25rem; border:1px solid #c6e6c6; background:#fff; box-shadow:0 6px 12px rgba(0,0,0,.06); max-height:14rem; overflow:auto; font-size:.9rem; }
+.kf-suggest .kf-item { padding:.45rem .75rem; cursor:pointer; border-bottom:1px solid #f0fdf4; }
+.kf-suggest .kf-title { color:#065f46; font-weight:600; }

@@ -1,0 +1,3 @@
+:root { --brand:#228B22; }
+a { color: var(--brand); }
+.btn-brand { background: var(--brand); color: #fff; }

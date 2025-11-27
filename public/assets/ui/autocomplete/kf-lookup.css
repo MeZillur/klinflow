@@ -1,0 +1,24 @@
+/* ==========================================================================
+ * KlinFlow Unified Autocomplete (Light + Dark)
+ * Brand: #228B22
+ * ========================================================================== */
+.kf-suggest{position:absolute;left:0;right:0;margin-top:.25rem;border:1px solid #c6e6c6;border-radius:.5rem;background:#fff;box-shadow:0 6px 12px rgba(0,0,0,.06);max-height:14rem;overflow:auto;z-index:9999;font-family:system-ui,-apple-system,Segoe UI,Inter,sans-serif;font-size:.9rem;opacity:0;transform:translateY(-2px);transition:opacity .12s ease,transform .12s ease}
+.kf-suggest.open{opacity:1;transform:translateY(0)}
+.kf-suggest .kf-item{padding:.45rem .75rem;cursor:pointer;border-bottom:1px solid #f0fdf4}
+.kf-suggest .kf-item:last-child{border-bottom:0}
+.kf-suggest .kf-item:hover,.kf-suggest .kf-item[aria-selected="true"]{background:#e9fbe9}
+.kf-suggest .kf-title{color:#065f46;font-weight:600}
+.kf-suggest .kf-sub{color:#475569;font-size:.75rem}
+.kf-suggest::-webkit-scrollbar{width:8px}
+.kf-suggest::-webkit-scrollbar-thumb{background:#bbf7d0;border-radius:10px}
+.kf-suggest::-webkit-scrollbar-thumb:hover{background:#86efac}
+/* Dark */
+@media (prefers-color-scheme: dark){
+  .kf-suggest{background:#0f172a;border-color:#334155;box-shadow:0 8px 18px rgba(0,0,0,.6)}
+  .kf-suggest .kf-item{border-bottom:1px solid #1f2937}
+  .kf-suggest .kf-item:hover,.kf-suggest .kf-item[aria-selected="true"]{background:#114f22}
+  .kf-suggest .kf-title{color:#86efac}
+  .kf-suggest .kf-sub{color:#cbd5e1}
+  .kf-suggest::-webkit-scrollbar-thumb{background:#14532d}
+  .kf-suggest::-webkit-scrollbar-thumb:hover{background:#166534}
+}

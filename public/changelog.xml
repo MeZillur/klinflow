@@ -1,0 +1,44 @@
+<?php
+declare(strict_types=1);
+/**
+ * /changelog.xml (RSS 2.0)
+ */
+header('Content-Type: application/rss+xml; charset=utf-8');
+
+$site  = 'https://www.klinflow.com';
+$title = 'KlinFlow Changelog';
+$desc  = 'Latest product updates across POS, HotelFlow, Bhata, School, MedFlow, and DMS.';
+
+$path = __DIR__ . '/../assets/changelog.json';
+$data = is_file($path) ? json_decode(file_get_contents($path) ?: '[]', true) : [];
+$items = is_array($data) ? $data : [];
+
+$last = $items[0]['date'] ?? date('c');
+$lastBuild = date(DATE_RSS, strtotime($last));
+
+echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+?>
+<rss version="2.0">
+  <channel>
+    <title><?= htmlspecialchars($title, ENT_QUOTES) ?></title>
+    <link><?= htmlspecialchars($site, ENT_QUOTES) ?></link>
+    <description><?= htmlspecialchars($desc, ENT_QUOTES) ?></description>
+    <language>en</language>
+    <lastBuildDate><?= $lastBuild ?></lastBuildDate>
+<?php foreach ($items as $i): 
+  $ver = (string)($i['version'] ?? 'vNext');
+  $date= (string)($i['date'] ?? date('c'));
+  $note= (string)($i['note'] ?? '');
+  $url = $site . '/changelog#' . rawurlencode($ver);
+  $pub = date(DATE_RSS, strtotime($date));
+?>
+    <item>
+      <title><?= htmlspecialchars($ver, ENT_QUOTES) ?></title>
+      <link><?= htmlspecialchars($url, ENT_QUOTES) ?></link>
+      <guid isPermaLink="false"><?= htmlspecialchars($ver . '|' . $date, ENT_QUOTES) ?></guid>
+      <pubDate><?= $pub ?></pubDate>
+      <description><![CDATA[<?= $note ?>]]></description>
+    </item>
+<?php endforeach; ?>
+  </channel>
+</rss>

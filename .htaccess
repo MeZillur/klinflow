@@ -1,0 +1,12 @@
+# --- KlinFlow root .htaccess ---
+RewriteEngine On
+RewriteBase /
+
+# Send everything to /public/index.php
+RewriteRule ^ public/index.php [QSA,L]
+
+# Optional hardening: block backend folders if someone tries directly
+RedirectMatch 403 ^/(apps|bootstrap|shared|routes|storage)(/|$)
+
+# Disable directory listing
+Options -Indexes

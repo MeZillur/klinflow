@@ -1,0 +1,20 @@
+# --- Disable PHP execution inside uploads ---
+
+# For mod_php (some shared hosts)
+<IfModule mod_php7.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+  php_flag engine off
+</IfModule>
+
+# Extra guard for any PHP-like files
+<FilesMatch "\.(php|php[0-9]|phtml)$">
+  Require all denied
+</FilesMatch>
+<IfModule !mod_authz_core.c>
+  <FilesMatch "\.(php|php[0-9]|phtml)$">
+    Order allow,deny
+    Deny from all
+  </FilesMatch>
+</IfModule>

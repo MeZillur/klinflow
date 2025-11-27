@@ -1,0 +1,21 @@
+# (paste the same content you saw in the .gitignore block above)
+.DS_Store
+Thumbs.db
+.env
+.env.* 
+.config/*.json
+.credentials.json
+node_modules/
+vendor/
+public/build/
+dist/
+build/
+*.sql
+*.sqlite
+*.zip
+*.tar.gz
+modules.zip
+.vscode/
+.idea/
+.Trashes
+.BrowserSync

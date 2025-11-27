@@ -1,0 +1,29 @@
+{
+  "name": "klinflow/core",
+  "description": "KlinFlow multi-tenant PHP app — lightweight modular system.",
+  "type": "project",
+  "require": {
+    "php": ">=8.1",
+    "ext-pdo": "*",
+    "resend/resend-php": "^0.22.0",
+    "dompdf/dompdf": "^3.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "app/",
+      "Shared\\": "shared/",
+      "Modules\\": "modules/"
+    },
+    "files": [
+      "shared/helpers.php"
+    ]
+  },
+  "scripts": {
+    "post-install-cmd": [
+      "@php -r \"file_exists('.env') || copy('.env.example', '.env');\""
+    ]
+  },
+  "license": "proprietary",
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

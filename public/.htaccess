@@ -1,0 +1,82 @@
+# ----------------------------------------------------------------------
+# KlinFlow — Public Web Root (.htaccess)
+# ----------------------------------------------------------------------
+
+# Security & basics
+Options -Indexes
+FileETag None
+
+<IfModule mod_headers.c>
+  Header unset ETag
+  # Allow fonts to load across origins (helps with CDN/proxies)
+  <FilesMatch "\.(woff|woff2|ttf|otf)$">
+    Header set Access-Control-Allow-Origin "*"
+  </FilesMatch>
+</IfModule>
+
+# Block dotfiles and sensitive files
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>
+<FilesMatch "^(composer\.(json|lock)|package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|\.env)">
+  Require all denied
+</FilesMatch>
+
+# --- Rewriting ---------------------------------------------------------
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # 0) Serve existing files/dirs AS-IS (critical for /assets/* and uploads)
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # 1) Bypass: serve module assets directly from public mirror
+  #    /t/{slug}/apps/{module}/assets/{path}  -> /assets/modules/{module}/{path}
+  RewriteCond %{REQUEST_URI} ^/t/[^/]+/apps/([^/]+)/assets/(.+)$ [NC]
+  RewriteRule ^ assets/modules/%1/%2 [L,NC]
+
+  # (Optional) Tenant-specific branding mirror:
+  # RewriteCond %{REQUEST_URI} ^/t/([^/]+)/apps/([^/]+)/assets/(.+)$ [NC]
+  # RewriteRule ^ assets/tenants/%1/modules/%2/%3 [L,NC]
+
+  # 2) Flag tenant module URLs for the modules front controller
+  #    /t/{slug}/apps/{module}/...
+  RewriteCond %{REQUEST_URI} ^/t/[^/]+/apps/ [NC]
+  RewriteRule ^ - [E=KF_IS_MODULE:1]
+
+  # 3) Route flagged module requests
+  RewriteCond %{ENV:KF_IS_MODULE} =1
+  RewriteRule ^ modules.php [QSA,L]
+
+  # 4) Everything else -> main front controller
+  RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Storage protection (never serve raw storage)
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^storage/ - [F,L,NC]
+</IfModule>
+
+# Serve public assets directly (early exit)
+RewriteRule ^assets/ - [L]
+
+# Correct MIME types (Hostinger can mis-serve SVG/WebP/WOFF2)
+AddType image/svg+xml .svg .svgz
+AddType image/webp    .webp
+AddType font/woff2    .woff2
+
+# Static asset caching
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/webp  "access plus 1 year"
+  ExpiresByType image/png   "access plus 1 year"
+  ExpiresByType image/jpeg  "access plus 1 year"
+  ExpiresByType image/gif   "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType text/css    "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+  ExpiresByType font/woff2  "access plus 1 year"
+</IfModule>

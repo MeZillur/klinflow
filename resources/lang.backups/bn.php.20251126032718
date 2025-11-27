@@ -1,0 +1,99 @@
+<?php
+return [
+  // language names
+  'English' => 'ইংরেজি',
+  'Bangla'  => 'বাংলা',
+  'EN'      => 'EN',
+  'BN'      => 'BN',
+
+  // shell / common UI
+  'My Profile'    => 'আমার প্রোফাইল',
+  'Forgot password' => 'পাসওয়ার্ড ভুলে গেছেন',
+  'Users'         => 'ব্যবহারকারী',
+  'Invite user'   => 'ব্যবহারকারী আমন্ত্রণ',
+  'App dashboard' => 'অ্যাপ ড্যাশবোর্ড',
+  'App settings'  => 'অ্যাপ সেটিংস',
+  'Sign out'      => 'সাইন আউট',
+
+  // lookup / picker / messages
+  'Search'        => 'অনুসন্ধান',
+  'No matches'    => 'কোন মিল নেই',
+  'New Order'     => 'নতুন অর্ডার',
+  'Export CSV'    => 'CSV এক্সপোর্ট',
+  'Server CSV'    => 'সার্ভার CSV',
+  'JSON'          => 'JSON',
+  'Print'         => 'প্রিন্ট',
+
+  // Filters / forms / buttons
+  'From'          => 'থেকে',
+  'To'            => 'পর্যন্ত',
+  'Supplier'      => 'সরবরাহকারী',
+  'SR / DSR'      => 'SR / DSR',
+  'Status'        => 'স্থিতি',
+  'Apply'         => 'প্রয়োগ',
+  'Reset'         => 'রিসেট',
+  'Apply filter'  => 'ফিল্টার প্রয়োগ',
+  'Create'        => 'তৈরি করুন',
+  'Submit'        => 'জমা দিন',
+  'Cancel'        => 'বাতিল',
+  'Save'          => 'সেভ করুন',
+  'Confirm'       => 'নিশ্চিত করুন',
+  'Delete'        => 'মুছুন',
+  'Edit'          => 'সম্পাদনা',
+  'View'          => 'বিস্তারিত',
+  'Print Invoice' => 'ইনভয়েস প্রিন্ট',
+
+  // Table headers and generic labels
+  'Date'          => 'তারিখ',
+  'Order No'      => 'অর্ডার নং',
+  'Customer'      => 'কাস্টমার',
+  'Total'         => 'মোট',
+  'Actions'       => 'কর্ম',
+  'Records'       => 'রেকর্ডস',
+  'Grand Total'   => 'সর্বমোট',
+  'Status: Any'   => 'স্থিতি: যেকোন',
+  'Records: %d'   => 'রেকর্ড: %d',
+
+  // Status labels
+  'DRAFT'         => 'খসড়া',
+  'ISSUED'        => 'জারি',
+  'CONFIRMED'     => 'নিশ্চিত',
+  'PAID'          => 'পরিশোধিত',
+  'UNPAID'        => 'অপরিশোধিত',
+
+  // Orders/actions
+  'New order'     => 'নতুন অর্ডার',
+  'Order created' => 'অর্ডার তৈরি হয়েছে',
+  'Order updated' => 'অর্ডার আপডেট হয়েছে',
+  'Order deleted' => 'অর্ডার মুছে ফেলা হয়েছে',
+
+  // Products / inventory
+  'Products'      => 'পণ্য',
+  'Price'         => 'মূল্য',
+  'Quantity'      => 'পরিমাণ',
+  'SKU'           => 'SKU',
+  'Stock'         => 'স্টক',
+
+  // Customers / suppliers
+  'Customers'     => 'গ্রাহক',
+  'Suppliers'     => 'সরবরাহকারী',
+  'Create customer' => 'গ্রাহক তৈরি করুন',
+
+  // Notifications / errors
+  'Success'       => 'সাফল্য',
+  'Error'         => 'ত্রুটি',
+  'Please fix errors and try again' => 'অনুগ্রহ করে ত্রুটিগুলো ঠিক করুন এবং পুনরায় চেষ্টা করুন',
+  'Not found'     => 'পাওয়া যায়নি',
+
+  // Misc
+  'Loading'       => 'লোড হচ্ছে',
+  'No Data'       => 'কোন ডেটা নেই',
+  'Actions'       => 'কর্ম',
+  'Back'          => 'ফিরে যান',
+
+  // More UI text commonly used
+  'Apply changes' => 'পরিবর্তন প্রয়োগ করুন',
+  'Preview'       => 'প্রি-ভিউ',
+  'Download'      => 'ডাউনলোড',
+  'Upload'        => 'আপলোড',
+];

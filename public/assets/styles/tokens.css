@@ -1,0 +1,284 @@
+/* ==========================================================================
+   DMS Design Tokens
+   Location: /public/assets/styles/tokens.css
+   --------------------------------------------------------------------------
+   Defines colors, spacing, typography, radii, and shadows for DMS UI.
+   This file should be loaded once (global). Components should consume tokens
+   and avoid hard-coded colors.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+ * SEGMENT 1: Core palette and scales (light baseline)
+ * ------------------------------------------------------------------------ */
+:root {
+  /* Brand */
+  --brand:        #228B22; /* primary green */
+  --brand-50:     #f0fdf4;
+  --brand-100:    #dcfce7;
+  --brand-200:    #bbf7d0;
+  --brand-300:    #86efac;
+  --brand-400:    #4ade80;
+  --brand-500:    #22c55e;
+  --brand-600:    #16a34a;
+  --brand-700:    #15803d;
+  --brand-800:    #166534;
+  --brand-900:    #14532d;
+
+  /* Semantic (success/warn/danger kept subtle; brand is primary) */
+  --success:      #16a34a;
+  --warning:      #d97706;
+  --danger:       #dc2626;
+
+  /* Neutrals (light) */
+  --bg:           #ffffff;
+  --layer-1:      #ffffff;   /* panels/cards */
+  --layer-2:      #f8fafc;   /* subdued blocks */
+  --text:         #0f172a;
+  --text-muted:   #64748b;
+  --border:       #e5e7eb;
+
+  /* Focus ring */
+  --ring:         color-mix(in oklab, var(--brand), transparent 70%);
+
+  /* Rounding & Shadows */
+  --radius-sm:    .375rem;
+  --radius-md:    .75rem;
+  --radius-lg:    1rem;
+
+  --shadow-sm:    0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:    0 4px 12px rgba(0,0,0,.08);
+  --shadow-lg:    0 10px 24px rgba(0,0,0,.12);
+
+  /* Spacing scale (t-shirt sizes) */
+  --space-1:      .25rem;
+  --space-2:      .5rem;
+  --space-3:      .75rem;
+  --space-4:      1rem;
+  --space-5:      1.25rem;
+  --space-6:      1.5rem;
+  --space-8:      2rem;
+  --space-10:     2.5rem;
+  --space-12:     3rem;
+
+  /* Typography */
+  --font-sans:    Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --fs-xxs:       .6875rem;
+  --fs-xs:        .75rem;
+  --fs-sm:        .875rem;
+  --fs-md:        1rem;
+  --fs-lg:        1.125rem;
+  --fs-xl:        1.25rem;
+
+  /* Z-indices (guideline) */
+  --z-drawer:     30;
+  --z-header:     20;
+  --z-dropdown:   50;
+  --z-modal:      60;
+  --z-toast:      70;
+
+  /* Component semantic tokens (light) */
+  --card-bg:      var(--layer-1);
+  --card-border:  var(--border);
+  --input-bg:     #ffffff;
+  --input-text:   var(--text);
+  --input-border: var(--border);
+  --menu-bg:      #ffffff;
+  --menu-border:  var(--border);
+}
+
+/* --------------------------------------------------------------------------
+ * SEGMENT 2: Dark theme mirrors (opt-in via [data-theme="dark"])
+ * ------------------------------------------------------------------------ */
+html[data-theme="dark"] {
+  /* Base neutrals */
+  --bg:           #0b1220;
+  --layer-1:      #111827;
+  --layer-2:      #0f172a;
+
+  --text:         #e5e7eb;
+  --text-muted:   #94a3b8;
+  --border:       #273143;
+
+  /* Focus ring remains brand-tinted in dark */
+  --ring:         color-mix(in oklab, var(--brand), transparent 70%);
+
+  /* Component tokens */
+  --card-bg:      var(--layer-1);
+  --card-border:  var(--border);
+  --input-bg:     #0f172a;
+  --input-text:   var(--text);
+  --input-border: #334155;
+  --menu-bg:      #0f172a;
+  --menu-border:  #334155;
+
+  /* Shadows: slightly stronger blur with higher alpha */
+  --shadow-sm:    0 1px 2px rgba(0,0,0,.35);
+  --shadow-md:    0 6px 14px rgba(0,0,0,.45);
+  --shadow-lg:    0 14px 36px rgba(0,0,0,.55);
+}
+
+/* --------------------------------------------------------------------------
+ * SEGMENT 3: Global element defaults
+ * ------------------------------------------------------------------------ */
+* { box-sizing: border-box; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+
+/* Accessibility helpers */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 1px, 1px); white-space: nowrap; border: 0;
+}
+
+/* High-contrast tweaks */
+@media (prefers-contrast: more) {
+  :root { --ring: color-mix(in oklab, var(--brand), white 10%); }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* Focus rings */
+.focus-ring,
+:where(button, [role="button"], a, input, select, textarea):focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ring);
+  border-radius: var(--radius-sm);
+}
+
+/* --------------------------------------------------------------------------
+ * SEGMENT 4: Primitive component utilities (optional)
+ * Keep these lightweight; complex styles live with components.
+ * ------------------------------------------------------------------------ */
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  padding: .5rem .9rem;
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  background: #fff;
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  text-decoration: none;
+}
+.btn:hover { background: #fafafa; }
+html[data-theme="dark"] .btn { background: var(--layer-1); }
+html[data-theme="dark"] .btn:hover { background: #1f2937; }
+
+.btn-primary {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+}
+.btn-primary:hover { filter: brightness(.97); }
+
+.btn-outline {
+  background: transparent;
+  color: var(--brand);
+  border-color: color-mix(in oklab, var(--brand) 60%, transparent);
+}
+.btn-outline:hover {
+  background: color-mix(in oklab, var(--brand) 10%, white);
+}
+html[data-theme="dark"] .btn-outline:hover {
+  background: color-mix(in oklab, var(--brand) 20%, black);
+}
+
+.btn-danger {
+  border-color: color-mix(in oklab, var(--danger), transparent 40%);
+  background: var(--danger);
+  color: #fff;
+}
+.btn-danger:hover { filter: brightness(.97); }
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  font-size: .75rem;
+  padding: .2rem .5rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--brand) 40%, transparent);
+  color: var(--brand);
+  background: color-mix(in oklab, var(--brand) 8%, white);
+}
+html[data-theme="dark"] .badge {
+  background: color-mix(in oklab, var(--brand) 18%, black);
+  border-color: color-mix(in oklab, var(--brand) 55%, transparent);
+  color: #e1ffe8;
+}
+
+/* Inputs */
+.input,
+select.select,
+textarea.input {
+  width: 100%;
+  background: var(--input-bg);
+  color: var(--input-text);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  padding: .5rem .625rem;
+  font-size: var(--fs-sm);
+}
+.input::placeholder,
+textarea.input::placeholder { color: var(--text-muted); }
+
+/* Cards / Panels */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-4);
+}
+
+/* Links */
+.link {
+  color: var(--brand);
+  text-decoration: none;
+}
+.link:hover { text-decoration: underline; }
+
+/* --------------------------------------------------------------------------
+ * SEGMENT 5: Menu and popover helpers (used by dropdowns/sidenavs)
+ * ------------------------------------------------------------------------ */
+.menu {
+  background: var(--menu-bg);
+  border: 0px solid var(--menu-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.menu-item {
+  padding: .5rem .75rem;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.menu-item:hover {
+  background: color-mix(in oklab, var(--brand) 8%, white);
+}
+html[data-theme="dark"] .menu-item:hover {
+  background: color-mix(in oklab, var(--brand) 16%, black);
+}
+
+/* --------------------------------------------------------------------------
+ * SEGMENT 6: Helper brand utilities (optional classes)
+ * ------------------------------------------------------------------------ */
+.text-brand { color: var(--brand); }
+.bg-brand   { background: var(--brand); color: #fff; }
+.border-brand { border-color: var(--brand); }
