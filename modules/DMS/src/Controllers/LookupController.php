@@ -4,118 +4,42 @@ declare(strict_types=1);
 namespace Modules\DMS\Controllers;
 
 use PDO;
+use PDOStatement;
+use Throwable;
 
 /**
- * DMS LookupController (smart lookup for KF stack)
+ * DMS LookupController (Tom Select / KF stack)
  *
- * - Standard JSON: { items: [ { id, label, name?, code?, price?, unit_price?, ... } ], meta: {...} }
- * - Uses app/Support/api_helpers.php (if present) for respond_lookup() / format_lookup_item()
- * - Escapes LIKE safely and bounds limits
- * - Swallows errors to keep UI responsive (logs to error_log)
+ * Base URL (per tenant):
+ *   /t/{slug}/apps/dms/api/lookup/{entity}?q=term&limit=30
  *
- * Entities:
- *   /api/lookup/suppliers
- *   /api/lookup/categories
- *   /api/lookup/products
- *   /api/lookup/customers
- *   /api/lookup/stakeholders
- *   /api/lookup/users      (alias of stakeholders)
- *   /api/lookup/orders
- *   /api/lookup/invoices
+ * Supported entities:
+ *   - products, customers, suppliers, orders, users (and stakeholders)
+ *   - invoices  (new: lookup orders for invoice creation)
+ *
+ * Standard JSON shape:
+ *   {
+ *     "items": [...],
+ *     "meta":  { q, limit, org_id, count, ... }
+ *   }
  */
 final class LookupController extends BaseController
 {
     private const MAX_LIMIT     = 50;
     private const DEFAULT_LIMIT = 30;
 
+    private array $schemaCache = [];
+    private int $paramCounter = 0;
+    private ?array $lastSqlDebug = null;
+
     public function __construct()
     {
-        // Attempt to load project-level API helpers if available (non-fatal)
-        $helpers = dirname(__DIR__, 3) . '/app/Support/api_helpers.php';
-        if (is_file($helpers)) {
-            /** @noinspection PhpIncludeInspection */
-            require_once $helpers;
-        }
     }
 
-    /** GET {base}/api/lookup → discovery */
-    public function index(array $ctx): void
+    private function isDebug(): bool
     {
-        $this->json([
-            'entities' => [
-                'suppliers',
-                'categories',
-                'products',
-                'customers',
-                'stakeholders',
-                'users',     // alias
-                'orders',
-                'invoices',
-            ],
-            'hint' => 'Use /api/lookup/{entity}?q=term&limit=30',
-        ]);
+        return (int)($_GET['debug'] ?? 0) === 1;
     }
-
-    /** GET {base}/api/lookup/{entity}?q=... */
-    /** GET {base}/api/lookup/{entity}?q=... */
-public function handle(array $ctx, string $entity): void
-{
-    $entity = strtolower(trim($entity));
-
-    switch ($entity) {
-        /* ----------------- SUPPLIERS ----------------- */
-        case 'suppliers':
-        case 'supplier':
-            $this->suppliers($ctx);
-            return;
-
-        /* ----------------- CATEGORIES ---------------- */
-        case 'categories':
-        case 'category':
-            $this->categories($ctx);
-            return;
-
-        /* ----------------- PRODUCTS ------------------ */
-        case 'products':
-        case 'product':
-        case 'items':
-        case 'item':
-            $this->products($ctx);
-            return;
-
-        /* ----------------- CUSTOMERS ----------------- */
-        case 'customers':
-        case 'customer':
-            $this->customers($ctx);
-            return;
-
-        /* ----------------- STAKEHOLDERS / USERS ------ */
-        case 'stakeholders':
-        case 'stakeholder':
-        case 'users':
-        case 'user':
-            $this->stakeholders($ctx);
-            return;
-
-        /* ----------------- ORDERS -------------------- */
-        case 'orders':
-        case 'order':
-            $this->orders($ctx);
-            return;
-
-        /* ----------------- INVOICES ------------------ */
-        case 'invoices':
-        case 'invoice':
-            $this->invoices($ctx);
-            return;
-    }
-
-    $this->json(['items' => [], 'error' => 'unknown entity'], 404);
-}
-
-    /* ============================================================
-     * Shared helpers
-     * ========================================================== */
 
     private function limitFromRequest(): int
     {
@@ -128,12 +52,41 @@ public function handle(array $ctx, string $entity): void
         return trim((string)($_GET['q'] ?? ''));
     }
 
-    /**
-     * Escape a string for use in LIKE with explicit backslash escape.
-     */
+    private function baseMeta(string $q, int $limit, int $orgId, int $count = 0): array
+    {
+        return [
+            'q'      => $q,
+            'limit'  => $limit,
+            'org_id' => $orgId,
+            'count'  => $count,
+        ];
+    }
+
+    private function respond(array $items, array $meta = []): void
+    {
+        if (!array_key_exists('count', $meta)) {
+            $meta['count'] = count($items);
+        }
+        $this->json([
+            'items' => $items,
+            'meta'  => $meta,
+        ]);
+    }
+
+    private function respondError(string $error, array $metaExtras = [], int $httpCode = 500): void
+    {
+        http_response_code($httpCode);
+        $q   = $this->qFromRequest();
+        $lim = $this->limitFromRequest();
+        $org = $this->resolveOrgId([]);
+        $meta = $this->baseMeta($q, $lim, $org, 0);
+        $meta['error'] = $error;
+        $meta = array_merge($meta, $metaExtras);
+        $this->respond([], $meta);
+    }
+
     private function escapeLike(string $s): string
     {
-        // escape backslash first, then % and _
         return strtr($s, [
             '\\' => '\\\\',
             '%'  => '\\%',
@@ -141,694 +94,623 @@ public function handle(array $ctx, string $entity): void
         ]);
     }
 
-    /**
-     * Optionally run items through a global formatter (format_lookup_item)
-     * so other modules / global helpers can tweak the shape.
-     */
+    private function newPlaceholder(string $prefix = 'q'): string
+    {
+        $this->paramCounter++;
+        return ':' . $prefix . $this->paramCounter;
+    }
+
+    private function buildLikeClause(array $columns, string $q, array &$params, bool $useCollate = true): string
+    {
+        if ($q === '') return '';
+        $like = '%' . $this->escapeLike($q) . '%';
+        $parts = [];
+        foreach ($columns as $col) {
+            $ph = $this->newPlaceholder('q');
+            $parts[] = $col . ($useCollate ? " COLLATE utf8mb4_unicode_ci" : '') . " LIKE {$ph}";
+            $params[$ph] = $like;
+        }
+        return '(' . implode(' OR ', $parts) . ')';
+    }
+
+    private function bindAll(PDOStatement $st, array $params): void
+    {
+        foreach ($params as $k => $v) {
+            $name = (string)$k;
+            if ($name === '') continue;
+            if ($name[0] !== ':') $name = ':' . $name;
+            $type = is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR;
+            $st->bindValue($name, $v, $type);
+        }
+    }
+
+    private function normalizeScientificBarcode(string $s): string
+    {
+        $s = trim($s);
+        if ($s === '') return '';
+        if (stripos($s, 'e') === false) return $s;
+
+        $parts = preg_split('/e/i', $s);
+        if (!isset($parts[0]) || !isset($parts[1])) return $s;
+
+        $mantissa = $parts[0];
+        $exp = (int)$parts[1];
+        $neg = false;
+        if ($mantissa !== '' && ($mantissa[0] === '-' || $mantissa[0] === '+')) {
+            if ($mantissa[0] === '-') $neg = true;
+            $mantissa = substr($mantissa, 1);
+        }
+
+        if (strpos($mantissa, '.') !== false) {
+            [$intPart, $fracPart] = explode('.', $mantissa, 2);
+        } else {
+            $intPart = $mantissa;
+            $fracPart = '';
+        }
+
+        $intPart = preg_replace('/\D+/', '', $intPart);
+        $fracPart = preg_replace('/\D+/', '', $fracPart);
+        $mantNoDot = $intPart . $fracPart;
+        $decCount = strlen($fracPart);
+        $shift = $exp - $decCount;
+        if ($shift < 0) {
+            $fallback = @rtrim(sprintf('%.0f', (float)$s), '.');
+            return $fallback !== '' ? $fallback : $s;
+        }
+        $result = $mantNoDot . str_repeat('0', $shift);
+        $result = ltrim($result, '0');
+        if ($result === '') $result = '0';
+        if ($neg) $result = '-' . $result;
+        return $result;
+    }
+
+    private function resolveOrgId(array $ctx): int
+    {
+        try {
+            if (method_exists($this, 'orgId')) {
+                $id = (int)$this->orgId($ctx);
+                if ($id > 0) return $id;
+            }
+        } catch (Throwable $e) {
+            error_log('[DMS LookupController::resolveOrgId] ' . $e->getMessage());
+        }
+        try {
+            if (\PHP_SESSION_ACTIVE !== \session_status()) {
+                @\session_start();
+            }
+            $org = $_SESSION['tenant_org'] ?? null;
+            $id  = (int)($org['id'] ?? 0);
+            try { @\session_write_close(); } catch (Throwable $e) {}
+            return $id;
+        } catch (Throwable $e) {
+            error_log('[DMS LookupController::resolveOrgId(session)] ' . $e->getMessage());
+        }
+        return 0;
+    }
+
     private function formatItem(array $item): array
     {
-        if (function_exists('format_lookup_item')) {
-            $out = format_lookup_item($item);
-            if (is_array($out)) {
-                return $out;
-            }
-        }
         return $item;
     }
 
-    /**
-     * Attempt to respond using app-level helper if available; otherwise fall back to $this->json
-     */
-    private function respond(array $items, array $meta = []): void
+    public function index(array $ctx = []): void
     {
-        if (function_exists('respond_lookup')) {
-            respond_lookup($items, $meta);
-            return;
-        }
-
         $this->json([
-            'items' => $items,
-            'meta'  => $meta,
+            'entities' => [
+                'products',
+                'customers',
+                'suppliers',
+                'orders',
+                'invoices',
+                'users',
+                'stakeholders',
+            ],
+            'hint' => 'Use /api/lookup/{entity}?q=term&limit=30',
         ]);
     }
 
-    /* ============================================================
-     * Suppliers
-     * ========================================================== */
-
-    protected function suppliers(array $ctx): void
+    public function handle(array $ctx, string $entity): void
     {
+        $entity = strtolower(trim($entity));
+        $requestMeta = [
+            'entity' => $entity,
+            'q' => $this->qFromRequest(),
+            'limit' => $this->limitFromRequest(),
+            'debug' => $this->isDebug() ? 1 : 0,
+        ];
         try {
-            $pdo   = $this->pdo();
-            $orgId = (int)$this->orgId($ctx);
-            $q     = $this->qFromRequest();
-            $lim   = $this->limitFromRequest();
-
-            $where  = "s.org_id = :o";
-            $params = [':o' => $orgId, ':lim' => $lim];
-
-            if ($q !== '') {
-                $like   = '%' . $this->escapeLike($q) . '%';
-                $where .= " AND (
-                    s.name COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR s.code COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                )";
-                $params[':q'] = $like;
-            }
-
-            $sql = "
-                SELECT s.id, s.code, s.name
-                FROM dms_suppliers s
-                WHERE {$where}
-                ORDER BY s.name ASC
-                LIMIT :lim
-            ";
-
-            $st = $pdo->prepare($sql);
-            foreach ($params as $k => $v) {
-                $st->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-            }
-            $st->bindValue(':lim', $lim, PDO::PARAM_INT);
-            $st->execute();
-
-            $rows  = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            $items = [];
-
-            foreach ($rows as $r) {
-                $n = (string)($r['name'] ?? '');
-                $c = (string)($r['code'] ?? '');
-
-                $items[] = $this->formatItem([
-                    'id'       => (int)$r['id'],
-                    'name'     => $n,
-                    'code'     => $c,
-                    'label'    => trim($n . ($c !== '' ? " — {$c}" : '')),
-                    'sublabel' => $c,
-                    'meta'     => [],
-                ]);
-            }
-
-            $this->respond($items, [
-                'q'     => $q,
-                'limit' => $lim,
-            ]);
-        } catch (\Throwable $e) {
-            error_log('Lookup suppliers failed: ' . $e->getMessage());
-            $this->respond([], []);
+            $requestMeta['org_id'] = $this->resolveOrgId($ctx);
+        } catch (Throwable $ignored) {
+            $requestMeta['org_id'] = 0;
         }
-    }
 
-    /* ============================================================
-     * Categories
-     * ========================================================== */
-
-    protected function categories(array $ctx): void
-    {
         try {
-            $pdo   = $this->pdo();
-            $orgId = (int)$this->orgId($ctx);
-            $q     = $this->qFromRequest();
-            $lim   = $this->limitFromRequest();
-
-            $table = 'dms_categories';
-            try {
-                $pdo->query("SELECT 1 FROM {$table} LIMIT 1");
-            } catch (\Throwable $ex) {
-                $table = 'dms_product_categories';
-            }
-
-            $where  = "c.org_id = :o";
-            $params = [':o' => $orgId, ':lim' => $lim];
-
-            if ($q !== '') {
-                $like   = '%' . $this->escapeLike($q) . '%';
-                $where .= " AND (
-                    c.name COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR c.code COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                )";
-                $params[':q'] = $like;
-            }
-
-            $sql = "
-                SELECT c.id, c.code, c.name
-                FROM {$table} c
-                WHERE {$where}
-                ORDER BY c.name ASC
-                LIMIT :lim
-            ";
-
-            $st = $pdo->prepare($sql);
-            foreach ($params as $k => $v) {
-                $st->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-            }
-            $st->bindValue(':lim', $lim, PDO::PARAM_INT);
-            $st->execute();
-
-            $rows  = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            $items = [];
-
-            foreach ($rows as $r) {
-                $name = (string)($r['name'] ?? '');
-                $code = (string)($r['code'] ?? '');
-
-                $items[] = $this->formatItem([
-                    'id'       => (int)$r['id'],
-                    'name'     => $name,
-                    'code'     => $code,
-                    'label'    => ($name !== '' ? $name : $code),
-                    'sublabel' => $code !== '' ? $code : '',
-                    'meta'     => [],
-                ]);
-            }
-
-            $this->respond($items, [
-                'q'     => $q,
-                'limit' => $lim,
-            ]);
-        } catch (\Throwable $e) {
-            error_log('Lookup categories failed: ' . $e->getMessage());
-            $this->respond([], []);
-        }
-    }
-
-    /* ============================================================
-     * Invoices
-     * ========================================================== */
-
-    protected function invoices(array $ctx): void
-    {
-        try {
-            $pdo   = $this->pdo();
-            $orgId = (int)$this->orgId($ctx);
-            if ($orgId <= 0) {
-                $orgId = (int)($_SESSION['tenant_org']['id'] ?? 0);
-            }
-
-            $q   = $this->qFromRequest();
-            $lim = $this->limitFromRequest();
-
-            // FAST PATH: exact id lookup if ?id=NN provided or q is purely numeric
-            $exactId = (int)($_GET['id'] ?? 0);
-            if ($exactId <= 0 && $q !== '' && preg_match('/^\d+$/', $q)) {
-                $exactId = (int)$q;
-            }
-
-            if ($exactId > 0) {
-                $sql = "
-                    SELECT
-                        s.id,
-                        COALESCE(s.invoice_no, s.sale_no, CONCAT('INV-', s.id)) AS code,
-                        NULLIF(TRIM(COALESCE(c.name, s.customer_name, '')), '') AS customer_name,
-                        COALESCE(s.customer_id, 0) AS customer_id,
-                        COALESCE(s.order_no, '') AS order_no,
-                        COALESCE(s.order_id, 0) AS order_id,
-                        COALESCE(s.delivery_user_id, s.sale_user_id, 0) AS sr_id
-                    FROM dms_sales s
-                    LEFT JOIN dms_customers c ON c.id = s.customer_id AND c.org_id = s.org_id
-                    WHERE s.id = :id AND s.org_id = :o
-                    LIMIT 1
-                ";
-
-                $st = $pdo->prepare($sql);
-                $st->bindValue(':id', $exactId, PDO::PARAM_INT);
-                $st->bindValue(':o',  $orgId,   PDO::PARAM_INT);
-                $st->execute();
-
-                $row = $st->fetch(PDO::FETCH_ASSOC);
-                if ($row) {
-                    $items = $this->buildInvoiceItemsWithSrNames($pdo, [$row]);
-
-                    $this->respond($items, [
-                        'q'       => $q,
-                        'limit'   => $lim,
-                        'exactId' => $exactId,
-                    ]);
+            switch ($entity) {
+                case 'product': case 'products': case 'item': case 'items':
+                    $this->products($ctx); return;
+                case 'customer': case 'customers':
+                    $this->customers($ctx); return;
+                case 'supplier': case 'suppliers':
+                    $this->suppliers($ctx); return;
+                case 'order': case 'orders':
+                    $this->orders($ctx); return;
+                case 'invoice': case 'invoices':
+                    $this->invoices($ctx); return;
+                case 'user': case 'users':
+                    $this->users($ctx); return;
+                case 'stakeholder': case 'stakeholders':
+                    $this->users($ctx); return;
+                default:
+                    $meta = $this->baseMeta($this->qFromRequest(), $this->limitFromRequest(), $requestMeta['org_id'], 0);
+                    $meta['error'] = 'unknown_entity';
+                    $meta['entity'] = $entity;
+                    $this->respond([], $meta);
                     return;
-                }
-                // else fall through to text search
             }
-
-            // Build WHERE safely (search invoice_no, sale_no, customer name, id)
-            $where  = "s.org_id = :o";
-            $params = [':o' => $orgId, ':lim' => $lim];
-
-            if ($q !== '') {
-                $like = '%' . $this->escapeLike($q) . '%';
-                $where .= " AND (
-                    s.invoice_no COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR s.sale_no COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR COALESCE(c.name, s.customer_name, '') COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR CAST(s.id AS CHAR) LIKE :qid
-                )";
-                $params[':q']   = $like;
-                $params[':qid'] = '%' . $q . '%';
+        } catch (Throwable $e) {
+            try {
+                $errId = bin2hex(random_bytes(12));
+            } catch (Throwable $t) {
+                $errId = substr(sha1((string)microtime(true) . $e->getMessage()), 0, 24);
             }
+            $logEntry = sprintf(
+                "[DMS LookupController::handle][%s] %s in %s:%d\nStack trace:\n%s\nRequest: %s\n",
+                $errId, $e->getMessage(), $e->getFile(), $e->getLine(), $e->getTraceAsString(),
+                json_encode($requestMeta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+            );
+            $prev = $e->getPrevious();
+            if ($prev !== null) $logEntry .= "Previous: " . (string)$prev . "\n";
+            if ($this->lastSqlDebug) $logEntry .= "SQL debug: " . json_encode($this->lastSqlDebug, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n";
+            error_log($logEntry);
 
-            $sql = "
-                SELECT
-                    s.id,
-                    COALESCE(s.invoice_no, s.sale_no, CONCAT('INV-', s.id)) AS code,
-                    NULLIF(TRIM(COALESCE(c.name, s.customer_name, '')), '') AS customer_name,
-                    COALESCE(s.customer_id, 0) AS customer_id,
-                    COALESCE(s.order_no, '') AS order_no,
-                    COALESCE(s.order_id, 0) AS order_id,
-                    COALESCE(s.delivery_user_id, s.sale_user_id, 0) AS sr_id
-                FROM dms_sales s
-                LEFT JOIN dms_customers c ON c.id = s.customer_id AND c.org_id = s.org_id
-                WHERE {$where}
-                ORDER BY s.id DESC
-                LIMIT :lim
-            ";
-
-            $st = $pdo->prepare($sql);
-            foreach ($params as $k => $v) {
-                $st->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
+            http_response_code(500);
+            $meta = $this->baseMeta($this->qFromRequest(), $this->limitFromRequest(), $requestMeta['org_id'], 0);
+            $meta['error'] = 'unexpected_error';
+            $meta['id'] = $errId;
+            $meta['hint'] = 'Something went wrong. Provide this ID to support.';
+            if ($this->isDebug()) {
+                $meta['debug'] = ['message'=>$e->getMessage(),'file'=>$e->getFile(),'line'=>$e->getLine()];
             }
-            $st->bindValue(':lim', $lim, PDO::PARAM_INT);
-            $st->execute();
-
-            $rows  = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            $items = $this->buildInvoiceItemsWithSrNames($pdo, $rows);
-
-            $this->respond($items, [
-                'q'     => $q,
-                'limit' => $lim,
-            ]);
-        } catch (\Throwable $e) {
-            error_log('Lookup invoices failed: ' . $e->getMessage());
-            $this->respond([], []);
+            $this->respond([], $meta);
         }
     }
 
-    /**
-     * Build invoice items and resolve SR names (dms_stakeholders → cp_users fallback).
-     *
-     * @param PDO   $pdo
-     * @param array $rows raw rows from dms_sales + customers join
-     * @return array formatted items
-     */
-    private function buildInvoiceItemsWithSrNames(PDO $pdo, array $rows): array
+    /* PRODUCTS (as before) */
+    private function products(array $ctx): void
     {
-        if (!$rows) {
-            return [];
+        $this->paramCounter = 0;
+        $this->lastSqlDebug = null;
+
+        $pdo   = $this->pdo();
+        $orgId = $this->resolveOrgId($ctx);
+        $q     = $this->qFromRequest();
+        $lim   = $this->limitFromRequest();
+        $debug = $this->isDebug();
+
+        if ($orgId <= 0) {
+            $this->respondError('org_missing', ['org_id' => $orgId], 400);
+            return;
         }
 
-        // Collect SR IDs
-        $srIds = [];
-        foreach ($rows as $r) {
-            $sr = (int)($r['sr_id'] ?? 0);
-            if ($sr > 0) {
-                $srIds[] = $sr;
-            }
-        }
-
-        $srIds = array_values(array_unique($srIds));
-        $srMap = [];
-
-        if ($srIds) {
-            // try dms_stakeholders first
-            if ($this->hasTable($pdo, 'dms_stakeholders')) {
-                $in = implode(',', array_fill(0, count($srIds), '?'));
-                $q  = $pdo->prepare("SELECT id, name FROM dms_stakeholders WHERE id IN ($in)");
-                $q->execute($srIds);
-                foreach ($q->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
-                    $srMap[(int)$r['id']] = (string)$r['name'];
-                }
-            }
-
-            // fallback to cp_users for any missing
-            $missing = array_diff($srIds, array_keys($srMap));
-            if ($missing && $this->hasTable($pdo, 'cp_users')) {
-                $in = implode(',', array_fill(0, count($missing), '?'));
-                $q  = $pdo->prepare("SELECT id, COALESCE(name, email, '') AS name FROM cp_users WHERE id IN ($in)");
-                $q->execute(array_values($missing));
-                foreach ($q->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
-                    $srMap[(int)$r['id']] = (string)$r['name'];
-                }
-            }
-        }
-
-        // Build final items
-        $items = [];
-        foreach ($rows as $r) {
-            $id   = (int)$r['id'];
-            $code = (string)($r['code'] ?? ('INV-' . $id));
-            $cust = (string)($r['customer_name'] ?? '');
-            $srid = (int)($r['sr_id'] ?? 0);
-
-            $items[] = $this->formatItem([
-                'id'            => $id,
-                'label'         => "[#{$id}] {$code}",
-                'code'          => $code,
-                'name'          => $code,
-                'customer_name' => $cust,
-                'customer_id'   => (int)($r['customer_id'] ?? 0),
-                'order_no'      => (string)($r['order_no'] ?? ''),
-                'order_id'      => (int)($r['order_id'] ?? 0),
-                'sr_id'         => $srid,
-                'sr_name'       => $srMap[$srid] ?? '',
-                'meta'          => [
-                    'customer_id' => (int)($r['customer_id'] ?? 0),
-                    'sr_id'       => $srid,
-                    'order_id'    => (int)($r['order_id'] ?? 0),
-                ],
-            ]);
-        }
-
-        return $items;
-    }
-
-    /* ============================================================
-     * Products
-     * ========================================================== */
-
-    protected function products(array $ctx): void
-    {
         try {
-            $pdo   = $this->pdo();
-            $orgId = (int)$this->orgId($ctx);
-            $q     = $this->qFromRequest();
-            $lim   = $this->limitFromRequest();
-
-            $where  = "p.org_id = :o";
-            $params = [':o' => $orgId, ':lim' => $lim];
+            $where  = 'p.org_id = :o';
+            $params = [':o' => $orgId];
 
             if ($q !== '') {
-                $like   = '%' . $this->escapeLike($q) . '%';
-                $where .= " AND (
-                    p.name COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR p.code COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR p.barcode LIKE :q
-                )";
-                $params[':q'] = $like;
+                $likeClause = $this->buildLikeClause(['p.name','p.code','CAST(p.barcode AS CHAR)'],$q,$params,true);
+                if ($likeClause !== '') $where .= " AND {$likeClause}";
             }
 
+            $orderClause = ($q === '')
+                ? "ORDER BY (CASE WHEN COALESCE(p.name,'') = '' THEN 1 ELSE 0 END), p.name ASC, p.id DESC"
+                : "ORDER BY p.name ASC";
+
             $sql = "
-                SELECT
-                    p.id,
-                    p.code,
-                    p.name,
-                    p.unit_price,
-                    p.category_id,
-                    p.uom_name,
-                    p.barcode
+                SELECT p.id, COALESCE(p.code,'') AS code, COALESCE(p.name,'') AS name,
+                       p.unit_price, p.category_id, p.uom_name, CAST(p.barcode AS CHAR) AS barcode
                 FROM dms_products p
                 WHERE {$where}
-                ORDER BY p.name ASC
+                {$orderClause}
                 LIMIT :lim
             ";
 
             $st = $pdo->prepare($sql);
-            foreach ($params as $k => $v) {
-                $st->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-            }
-            $st->bindValue(':lim', $lim, PDO::PARAM_INT);
+            $this->bindAll($st,$params);
+            $st->bindValue(':lim',$lim,PDO::PARAM_INT);
             $st->execute();
+            $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $usedSql = $sql; $usedParams = $params;
+            if ($debug) $this->lastSqlDebug = ['sql'=>$usedSql,'params'=>$usedParams];
 
-            $rows  = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            if (!$rows && $q !== '') {
+                $this->paramCounter = 0;
+                $params2 = [':o'=>$orgId];
+                $fallbackOrder = "ORDER BY (CASE WHEN COALESCE(p.name,'') = '' THEN 1 ELSE 0 END), p.name ASC, p.id DESC";
+                $sql2 = "
+                    SELECT p.id, COALESCE(p.code,'') AS code, COALESCE(p.name,'') AS name,
+                           p.unit_price, p.category_id, p.uom_name, CAST(p.barcode AS CHAR) AS barcode
+                    FROM dms_products p
+                    WHERE p.org_id = :o
+                    {$fallbackOrder}
+                    LIMIT :lim
+                ";
+                $st2 = $pdo->prepare($sql2);
+                $this->bindAll($st2,$params2);
+                $st2->bindValue(':lim',$lim,PDO::PARAM_INT);
+                $st2->execute();
+                $rows = $st2->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                $usedSql = $sql2; $usedParams = $params2;
+                if ($debug) $this->lastSqlDebug = ['sql'=>$usedSql,'params'=>$usedParams];
+            }
+
             $items = [];
-
             foreach ($rows as $r) {
-                $name  = (string)($r['name'] ?? '');
-                $code  = (string)($r['code'] ?? '');
-                $price = isset($r['unit_price']) ? (float)$r['unit_price'] : null;
-
+                $id = (int)$r['id'];
+                $name = (string)($r['name'] ?? '');
+                $code = (string)($r['code'] ?? '');
+                $barcodeRaw = (string)($r['barcode'] ?? '');
+                $barcode = $this->normalizeScientificBarcode($barcodeRaw);
+                $price = isset($r['unit_price']) && $r['unit_price'] !== null ? (float)$r['unit_price'] : null;
+                if ($name !== '') {
+                    $label = trim($name . ($code !== '' ? " ({$code})" : ''));
+                } elseif ($code !== '') {
+                    $label = $code;
+                } elseif ($barcode !== '') {
+                    $label = $barcode;
+                } else {
+                    $label = '#' . $id;
+                }
                 $items[] = $this->formatItem([
-                    'id'          => (int)$r['id'],
-                    'name'        => $name,
-                    'code'        => $code,
-                    'label'       => trim($name . ($code !== '' ? " ({$code})" : '')),
-                    'sublabel'    => (string)($r['barcode'] ?? ''),
-                    'unit_price'  => $price,
-                    'price'       => $price,
-                    'category_id' => isset($r['category_id']) ? (int)$r['category_id'] : null,
-                    'uom_name'    => (string)($r['uom_name'] ?? ''),
-                    'barcode'     => (string)($r['barcode'] ?? ''),
-                    'meta'        => [],
+                    'id'=>$id,'name'=>$name,'code'=>$code,'label'=>$label,'sublabel'=>$barcode,
+                    'unit_price'=>$price,'price'=>$price,
+                    'category_id'=>isset($r['category_id'])? (int)$r['category_id'] : null,
+                    'uom_name'=>(string)($r['uom_name'] ?? ''),'barcode'=>$barcode
                 ]);
             }
 
-            $this->respond($items, [
-                'q'     => $q,
-                'limit' => $lim,
-            ]);
-        } catch (\Throwable $e) {
-            error_log('Lookup products failed: ' . $e->getMessage());
-            $this->respond([], []);
+            $meta = $this->baseMeta($q,$lim,$orgId,count($items));
+            if ($debug) $meta['debug']=['sql'=>$usedSql,'params'=>$usedParams];
+            $this->respond($items,$meta);
+        } catch (Throwable $e) {
+            error_log('[DMS LookupController::products] ' . $e->getMessage());
+            if ($this->isDebug()) {
+                $this->respond([], array_merge($this->baseMeta($q,$lim,$orgId,0), ['error'=>'products_lookup_failed','debug'=>$e->getMessage()]));
+            } else {
+                $this->respondError('products_lookup_failed',['org_id'=>$orgId],500);
+            }
         }
     }
 
-    /* ============================================================
-     * Customers
-     * ========================================================== */
-
-    protected function customers(array $ctx): void
+    /* CUSTOMERS */
+    private function customers(array $ctx): void
     {
+        $this->paramCounter = 0; $this->lastSqlDebug = null;
+        $pdo = $this->pdo(); $orgId = $this->resolveOrgId($ctx);
+        $q = $this->qFromRequest(); $lim = $this->limitFromRequest(); $debug = $this->isDebug();
+        if ($orgId <= 0) { $this->respondError('org_missing',['org_id'=>$orgId],400); return; }
+
         try {
-            $pdo   = $this->pdo();
-            $orgId = (int)$this->orgId($ctx);
-            $q     = $this->qFromRequest();
-            $lim   = $this->limitFromRequest();
-
-            $where  = "c.org_id = :o";
-            $params = [':o' => $orgId, ':lim' => $lim];
-
+            $where = 'c.org_id = :o'; $params = [':o'=>$orgId];
             if ($q !== '') {
-                $like   = '%' . $this->escapeLike($q) . '%';
-                $where .= " AND (
-                    c.name  COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR c.code  COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR c.phone LIKE :q
-                    OR c.email LIKE :q
-                )";
-                $params[':q'] = $like;
+                $likeClause = $this->buildLikeClause(['c.name','c.code','c.phone','c.email'],$q,$params,true);
+                if ($likeClause !== '') $where .= " AND {$likeClause}";
             }
-
             $sql = "
-                SELECT
-                    c.id,
-                    c.code,
-                    c.name,
-                    c.phone,
-                    c.email,
-                    c.address
+                SELECT c.id, COALESCE(c.code,'') AS code, COALESCE(c.name,'') AS name,
+                       COALESCE(c.phone,'') AS phone, COALESCE(c.email,'') AS email,
+                       COALESCE(c.address,'') AS address
                 FROM dms_customers c
                 WHERE {$where}
                 ORDER BY c.name ASC
                 LIMIT :lim
             ";
-
             $st = $pdo->prepare($sql);
-            foreach ($params as $k => $v) {
-                $st->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-            }
-            $st->bindValue(':lim', $lim, PDO::PARAM_INT);
+            $this->bindAll($st,$params);
+            $st->bindValue(':lim',$lim,PDO::PARAM_INT);
             $st->execute();
+            $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $usedSql=$sql; $usedParams=$params;
+            if ($debug) $this->lastSqlDebug=['sql'=>$usedSql,'params'=>$usedParams];
 
-            $rows  = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            if (!$rows && $q !== '') {
+                $this->paramCounter = 0; $params2=[':o'=>$orgId];
+                $sql2 = "
+                    SELECT c.id, COALESCE(c.code,'') AS code, COALESCE(c.name,'') AS name,
+                           COALESCE(c.phone,'') AS phone, COALESCE(c.email,'') AS email,
+                           COALESCE(c.address,'') AS address
+                    FROM dms_customers c
+                    WHERE c.org_id = :o
+                    ORDER BY c.name ASC
+                    LIMIT :lim
+                ";
+                $st2 = $pdo->prepare($sql2);
+                $this->bindAll($st2,$params2);
+                $st2->bindValue(':lim',$lim,PDO::PARAM_INT);
+                $st2->execute();
+                $rows = $st2->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                $usedSql=$sql2; $usedParams=$params2;
+                if ($debug) $this->lastSqlDebug=['sql'=>$usedSql,'params'=>$usedParams];
+            }
+
             $items = [];
-
-            foreach ($rows as $r) {
-                $name  = (string)($r['name'] ?? '');
-                $code  = (string)($r['code'] ?? '');
-                $phone = (string)($r['phone'] ?? '');
-
-                $label = ($code !== '' ? "[{$code}] " : '') . $name;
-
+            foreach($rows as $r) {
+                $id=(int)$r['id']; $name=(string)($r['name']??''); $code=(string)($r['code']??'');
+                $phone=(string)($r['phone']??''); $email=(string)($r['email']??''); $address=(string)($r['address']??'');
+                if ($name !== '') { $label = ($code !== '' ? "[{$code}] " : '') . $name; }
+                elseif ($code !== '') { $label = $code; }
+                elseif ($phone !== '') { $label = $phone; }
+                elseif ($email !== '') { $label = $email; }
+                else { $label = '#' . $id; }
                 $items[] = $this->formatItem([
-                    'id'       => (int)$r['id'],
-                    'name'     => $name,
-                    'code'     => $code,
-                    'phone'    => $phone,
-                    'email'    => (string)($r['email'] ?? ''),
-                    'address'  => (string)($r['address'] ?? ''),
-                    'label'    => $label,
-                    'sublabel' => $phone,
-                    'meta'     => [],
+                    'id'=>$id,'name'=>$name,'code'=>$code,'phone'=>$phone,'email'=>$email,'address'=>$address,
+                    'label'=>$label,'sublabel'=>$phone !== '' ? $phone : $email
                 ]);
             }
-
-            $this->respond($items, [
-                'q'     => $q,
-                'limit' => $lim,
-            ]);
-        } catch (\Throwable $e) {
-            error_log('Lookup customers failed: ' . $e->getMessage());
-            $this->respond([], []);
+            $meta=$this->baseMeta($q,$lim,$orgId,count($items));
+            if ($debug) $meta['debug']=['sql'=>$usedSql,'params'=>$usedParams];
+            $this->respond($items,$meta);
+        } catch (Throwable $e) {
+            error_log('[DMS LookupController::customers] ' . $e->getMessage());
+            if ($this->isDebug()) {
+                $this->respond([], array_merge($this->baseMeta($q,$lim,$orgId,0), ['error'=>'customers_lookup_failed','debug'=>$e->getMessage()]));
+            } else {
+                $this->respondError('customers_lookup_failed',['org_id'=>$orgId],500);
+            }
         }
     }
 
-    /* ============================================================
-     * Stakeholders / Users
-     * ========================================================== */
-
-    protected function stakeholders(array $ctx): void
+    /* SUPPLIERS */
+    private function suppliers(array $ctx): void
     {
+        $this->paramCounter = 0; $this->lastSqlDebug = null;
+        $pdo = $this->pdo(); $orgId = $this->resolveOrgId($ctx);
+        $q = $this->qFromRequest(); $lim = $this->limitFromRequest(); $debug = $this->isDebug();
+        if ($orgId <= 0) { $this->respondError('org_missing',['org_id'=>$orgId],400); return; }
+
         try {
-            $pdo   = $this->pdo();
-            $orgId = (int)$this->orgId($ctx);
-            $q     = $this->qFromRequest();
-            $role  = strtolower(trim((string)($_GET['role'] ?? '')));
-            $lim   = $this->limitFromRequest();
-
-            $table = 'dms_stakeholders';
-            try {
-                $pdo->query("SELECT 1 FROM {$table} LIMIT 1");
-            } catch (\Throwable) {
-                $table = 'cp_users';
-            }
-
-            $where  = "t.org_id = :o";
-            $params = [':o' => $orgId, ':lim' => $lim];
-
+            $where='s.org_id = :o'; $params=[':o'=>$orgId];
             if ($q !== '') {
-                $like   = '%' . $this->escapeLike($q) . '%';
-                $where .= " AND (
-                    t.name  COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    OR t.email LIKE :q
-                    OR t.phone LIKE :q
-                )";
-                $params[':q'] = $like;
+                $likeClause = $this->buildLikeClause(['s.name','s.code','s.phone','s.email'],$q,$params,true);
+                if ($likeClause !== '') $where .= " AND {$likeClause}";
             }
-
-            if ($role !== '' && $table === 'dms_stakeholders') {
-                $where         .= " AND (t.role = :r)";
-                $params[':r']   = $role;
-            }
-
             $sql = "
-                SELECT
-                    t.id,
-                    t.name,
-                    COALESCE(t.email,'') AS email,
-                    COALESCE(t.phone,'') AS phone,
-                    COALESCE(t.role,'')  AS role
-                FROM {$table} t
+                SELECT s.id, COALESCE(s.code,'') AS code, COALESCE(s.name,'') AS name,
+                       COALESCE(s.phone,'') AS phone, COALESCE(s.email,'') AS email
+                FROM dms_suppliers s
                 WHERE {$where}
-                ORDER BY t.name ASC
+                ORDER BY s.name ASC
                 LIMIT :lim
             ";
-
             $st = $pdo->prepare($sql);
-            foreach ($params as $k => $v) {
-                $st->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-            }
-            $st->bindValue(':lim', $lim, PDO::PARAM_INT);
+            $this->bindAll($st,$params);
+            $st->bindValue(':lim',$lim,PDO::PARAM_INT);
             $st->execute();
+            $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $usedSql=$sql; $usedParams=$params;
+            if ($debug) $this->lastSqlDebug=['sql'=>$usedSql,'params'=>$usedParams];
 
-            $rows  = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            $items = [];
-
-            foreach ($rows as $r) {
-                $label = (string)($r['name'] ?? '');
-                $meta  = trim(
-                    (string)($r['email'] ?? '') . ' ' .
-                    (string)($r['phone'] ?? '')
-                );
-
-                $items[] = $this->formatItem([
-                    'id'       => (int)$r['id'],
-                    'name'     => (string)($r['name'] ?? ''),
-                    'email'    => (string)($r['email'] ?? ''),
-                    'phone'    => (string)($r['phone'] ?? ''),
-                    'role'     => (string)($r['role'] ?? ''),
-                    'label'    => $label,
-                    'sublabel' => $meta,
-                    'meta'     => [],
-                ]);
+            if (!$rows && $q !== '') {
+                $this->paramCounter = 0; $params2=[':o'=>$orgId];
+                $sql2 = "
+                    SELECT s.id, COALESCE(s.code,'') AS code, COALESCE(s.name,'') AS name,
+                           COALESCE(s.phone,'') AS phone, COALESCE(s.email,'') AS email
+                    FROM dms_suppliers s
+                    WHERE s.org_id = :o
+                    ORDER BY s.name ASC
+                    LIMIT :lim
+                ";
+                $st2 = $pdo->prepare($sql2);
+                $this->bindAll($st2,$params2);
+                $st2->bindValue(':lim',$lim,PDO::PARAM_INT);
+                $st2->execute();
+                $rows = $st2->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                $usedSql=$sql2; $usedParams=$params2;
+                if ($debug) $this->lastSqlDebug=['sql'=>$usedSql,'params'=>$usedParams];
             }
 
-            $this->respond($items, [
-                'q'     => $q,
-                'limit' => $lim,
-                'role'  => $role,
-            ]);
-        } catch (\Throwable $e) {
-            error_log('Lookup stakeholders failed: ' . $e->getMessage());
-            $this->respond([], []);
+            $items=[];
+            foreach($rows as $r) {
+                $id=(int)$r['id']; $name=(string)($r['name']??''); $code=(string)($r['code']??'');
+                $phone=(string)($r['phone']??''); $email=(string)($r['email']??'');
+                $sub = trim($phone . ' ' . $email);
+                $label = $name !== '' ? trim($name . ($code !== '' ? " ({$code})" : '')) : ($code !== '' ? $code : ($phone !== '' ? $phone : '#' . $id));
+                $items[] = $this->formatItem(['id'=>$id,'name'=>$name,'code'=>$code,'phone'=>$phone,'email'=>$email,'label'=>$label,'sublabel'=>$sub]);
+            }
+            $meta=$this->baseMeta($q,$lim,$orgId,count($items));
+            if ($debug) $meta['debug']=['sql'=>$usedSql,'params'=>$usedParams];
+            $this->respond($items,$meta);
+        } catch (Throwable $e) {
+            error_log('[DMS LookupController::suppliers] ' . $e->getMessage());
+            if ($this->isDebug()) {
+                $this->respond([], array_merge($this->baseMeta($q,$lim,$orgId,0), ['error'=>'suppliers_failed','debug'=>$e->getMessage()]));
+            } else {
+                $this->respondError('suppliers_failed',['org_id'=>$orgId],500);
+            }
         }
     }
 
-    /* ============================================================
-     * Orders (lookup only)
-     * ========================================================== */
-
-    protected function orders(array $ctx): void
+    /* ORDERS */
+    private function orders(array $ctx): void
     {
+        // Basic order lookup used elsewhere; invoices() is specialized for invoicing flow.
+        $this->paramCounter = 0; $this->lastSqlDebug = null;
+        $pdo = $this->pdo(); $orgId = $this->resolveOrgId($ctx);
+        $q = $this->qFromRequest(); $lim = $this->limitFromRequest(); $debug = $this->isDebug();
+        if ($orgId <= 0) { $this->respondError('org_missing',['org_id'=>$orgId],400); return; }
+
         try {
-            $pdo   = $this->pdo();
-            $orgId = (int)$this->orgId($ctx);
-            $q     = $this->qFromRequest();
-            $lim   = $this->limitFromRequest();
-
-            $where  = "o.org_id = :o";
-            $params = [':o' => $orgId, ':lim' => $lim];
-
+            $where='o.org_id = :o'; $params=[':o'=>$orgId];
             if ($q !== '') {
                 if (ctype_digit($q)) {
-                    $where .= " AND (
-                        o.id = :qid
-                        OR o.order_no LIKE :q
-                        OR o.reference LIKE :q
-                    )";
                     $params[':qid'] = (int)$q;
-                    $params[':q']   = '%' . $this->escapeLike($q) . '%';
+                    $likePart = $this->buildLikeClause(['o.order_no','o.reference'],$q,$params,true);
+                    $where .= " AND (o.id = :qid" . ($likePart !== '' ? " OR {$likePart}" : '') . ")";
                 } else {
-                    $where .= " AND (
-                        o.order_no  COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                        OR o.reference COLLATE utf8mb4_unicode_ci LIKE :q ESCAPE '\\\\'
-                    )";
-                    $params[':q'] = '%' . $this->escapeLike($q) . '%';
+                    $where .= " AND " . $this->buildLikeClause(['o.order_no','o.reference'],$q,$params,true);
                 }
             }
-
             $sql = "
-                SELECT
-                    o.id,
-                    o.order_no,
-                    o.reference,
-                    o.customer_id,
-                    COALESCE(o.customer_name,'') AS customer_name
+                SELECT o.id, COALESCE(o.order_no,'') AS order_no, COALESCE(o.reference,'') AS reference,
+                       o.customer_id, COALESCE(o.customer_name,'') AS customer_name
                 FROM dms_orders o
                 WHERE {$where}
                 ORDER BY o.id DESC
                 LIMIT :lim
             ";
-
             $st = $pdo->prepare($sql);
-            foreach ($params as $k => $v) {
-                $st->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR);
-            }
-            $st->bindValue(':lim', $lim, PDO::PARAM_INT);
+            $this->bindAll($st,$params);
+            $st->bindValue(':lim',$lim,PDO::PARAM_INT);
             $st->execute();
+            $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $usedSql=$sql; $usedParams=$params;
+            if ($debug) $this->lastSqlDebug=['sql'=>$usedSql,'params'=>$usedParams];
 
-            $rows  = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            $items = [];
+            $items=[];
+            foreach($rows as $r) {
+                $id=(int)$r['id']; $no=(string)($r['order_no']??''); $ref=(string)($r['reference']??''); $cust=(string)($r['customer_name']??'');
+                $label = $no !== '' ? $no : ('#' . $id);
+                $sublabel = $cust !== '' ? $cust : $ref;
+                $items[] = $this->formatItem(['id'=>$id,'order_no'=>$no,'reference'=>$ref,'customer_id'=>isset($r['customer_id'])?(int)$r['customer_id']:null,'customer_name'=>$cust,'label'=>$label,'sublabel'=>$sublabel]);
+            }
+            $meta = $this->baseMeta($q,$lim,$orgId,count($items));
+            if ($debug) $meta['debug']=['sql'=>$usedSql,'params'=>$usedParams];
+            $this->respond($items,$meta);
+        } catch (Throwable $e) {
+            error_log('[DMS LookupController::orders] ' . $e->getMessage());
+            if ($this->isDebug()) {
+                $this->respond([], array_merge($this->baseMeta($q,$lim,$orgId,0), ['error'=>'orders_lookup_failed','debug'=>$e->getMessage()]));
+            } else {
+                $this->respondError('orders_lookup_failed',['org_id'=>$orgId],500);
+            }
+        }
+    }
 
-            foreach ($rows as $r) {
-                $no   = (string)($r['order_no'] ?? '');
-                $ref  = (string)($r['reference'] ?? '');
-                $cust = (string)($r['customer_name'] ?? '');
+    /* INVOICES (order picker for invoice creation) */
+    private function invoices(array $ctx): void
+    {
+        $this->paramCounter = 0; $this->lastSqlDebug = null;
+        $pdo = $this->pdo(); $orgId = $this->resolveOrgId($ctx);
+        $q = $this->qFromRequest(); $lim = $this->limitFromRequest(); $debug = $this->isDebug();
+        if ($orgId <= 0) { $this->respondError('org_missing',['org_id'=>$orgId],400); return; }
 
+        // Optional flag: only return orders that are not invoiced (invoice_id IS NULL)
+        $uninvoiced = (int)($_GET['uninvoiced'] ?? 0) === 1;
+
+        try {
+            $where = 'o.org_id = :o';
+            $params = [':o' => $orgId];
+
+            if ($uninvoiced) {
+                // Adapt if your schema uses another column for invoices (invoice_id, is_invoiced, status etc.)
+                $where .= " AND o.invoice_id IS NULL";
+            }
+
+            if ($q !== '') {
+                if (ctype_digit($q)) {
+                    $params[':qid'] = (int)$q;
+                    $likePart = $this->buildLikeClause(['o.order_no','o.reference','COALESCE(o.customer_name,\'\')'],$q,$params,true);
+                    $where .= " AND (o.id = :qid" . ($likePart !== '' ? " OR {$likePart}" : '') . ")";
+                } else {
+                    $where .= " AND " . $this->buildLikeClause(['o.order_no','o.reference','COALESCE(o.customer_name,\'\')'],$q,$params,true);
+                }
+            }
+
+            $sql = "
+                SELECT o.id, COALESCE(o.order_no,'') AS order_no, COALESCE(o.reference,'') AS reference,
+                       o.customer_id, COALESCE(o.customer_name,'') AS customer_name, o.total_amount
+                FROM dms_orders o
+                WHERE {$where}
+                ORDER BY o.id DESC
+                LIMIT :lim
+            ";
+            $st = $pdo->prepare($sql);
+            $this->bindAll($st,$params);
+            $st->bindValue(':lim',$lim,PDO::PARAM_INT);
+            $st->execute();
+            $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $usedSql=$sql; $usedParams=$params;
+            if ($debug) $this->lastSqlDebug=['sql'=>$usedSql,'params'=>$usedParams];
+
+            $items=[];
+            foreach($rows as $r) {
+                $id=(int)$r['id'];
+                $no=(string)($r['order_no']??'');
+                $ref=(string)($r['reference']??'');
+                $cust=(string)($r['customer_name']??'');
+                $total = isset($r['total_amount']) ? (float)$r['total_amount'] : null;
+                $label = $no !== '' ? $no : ('#' . $id);
+                $sublabel = $cust !== '' ? $cust : $ref;
                 $items[] = $this->formatItem([
-                    'id'            => (int)$r['id'],
-                    'order_no'      => $no,
-                    'reference'     => $ref,
-                    'customer_id'   => isset($r['customer_id']) ? (int)$r['customer_id'] : null,
-                    'customer_name' => $cust,
-                    'label'         => ($no !== '' ? $no : ('#' . $r['id'])),
-                    'sublabel'      => $cust !== '' ? $cust : $ref,
-                    'meta'          => [],
+                    'id'=>$id,
+                    'order_no'=>$no,
+                    'reference'=>$ref,
+                    'customer_id'=> isset($r['customer_id']) ? (int)$r['customer_id'] : null,
+                    'customer_name'=>$cust,
+                    'total_amount'=>$total,
+                    'label'=>$label,
+                    'sublabel'=>$sublabel,
                 ]);
             }
 
-            $this->respond($items, [
-                'q'     => $q,
-                'limit' => $lim,
-            ]);
-        } catch (\Throwable $e) {
-            error_log('Lookup orders failed: ' . $e->getMessage());
-            $this->respond([], []);
+            $meta = $this->baseMeta($q,$lim,$orgId,count($items));
+            if ($debug) $meta['debug']=['sql'=>$usedSql,'params'=>$usedParams];
+            $this->respond($items,$meta);
+        } catch (Throwable $e) {
+            error_log('[DMS LookupController::invoices] ' . $e->getMessage());
+            if ($this->isDebug()) {
+                $this->respond([], array_merge($this->baseMeta($q,$lim,$orgId,0), ['error'=>'invoices_lookup_failed','debug'=>$e->getMessage()]));
+            } else {
+                $this->respondError('invoices_lookup_failed',['org_id'=>$orgId],500);
+            }
+        }
+    }
+
+    /* USERS */
+    private function users(array $ctx): void
+    {
+        $this->paramCounter = 0; $this->lastSqlDebug = null;
+        $pdo = $this->pdo(); $orgId = $this->resolveOrgId($ctx);
+        $q = $this->qFromRequest(); $lim = $this->limitFromRequest(); $debug = $this->isDebug();
+        if ($orgId <= 0) { $this->respondError('org_missing',['org_id'=>$orgId],400); return; }
+
+        try {
+            $where='u.org_id = :o'; $params=[':o'=>$orgId];
+            if ($q !== '') {
+                $likeClause = $this->buildLikeClause(['u.name','u.email'],$q,$params,true);
+                if ($likeClause !== '') $where .= " AND {$likeClause}";
+            }
+            $sql = "
+                SELECT u.id, COALESCE(u.name,'') AS name, COALESCE(u.email,'') AS email
+                FROM cp_users u
+                WHERE {$where}
+                ORDER BY u.name ASC
+                LIMIT :lim
+            ";
+            $st = $pdo->prepare($sql);
+            $this->bindAll($st,$params);
+            $st->bindValue(':lim',$lim,PDO::PARAM_INT);
+            $st->execute();
+            $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $usedSql=$sql; $usedParams=$params;
+            if ($debug) $this->lastSqlDebug=['sql'=>$usedSql,'params'=>$usedParams];
+
+            $items=[];
+            foreach($rows as $r) {
+                $id=(int)$r['id']; $name=(string)($r['name']??''); $email=(string)($r['email']??'');
+                $label = $name !== '' ? $name : ($email !== '' ? $email : '#' . $id);
+                $sub = ($email !== '' && $name !== '') ? $email : '';
+                $items[] = $this->formatItem(['id'=>$id,'name'=>$name,'email'=>$email,'label'=>$label,'sublabel'=>$sub]);
+            }
+            $meta=$this->baseMeta($q,$lim,$orgId,count($items));
+            if ($debug) $meta['debug']=['sql'=>$usedSql,'params'=>$usedParams];
+            $this->respond($items,$meta);
+        } catch (Throwable $e) {
+            error_log('[DMS LookupController::users] ' . $e->getMessage());
+            if ($this->isDebug()) {
+                $this->respond([], array_merge($this->baseMeta($q,$lim,$orgId,0), ['error'=>'users_lookup_failed','debug'=>$e->getMessage()]));
+            } else {
+                $this->respondError('users_lookup_failed',['org_id'=>$orgId],500);
+            }
         }
     }
 }
